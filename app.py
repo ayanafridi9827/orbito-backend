@@ -1,68 +1,42 @@
-from flask import Flask, request, send_file, jsonify, after_this_request
+from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
-from pytube import YouTube
 import uuid
-import re
-import io
-import traceback
+import os
+import subprocess
 
 app = Flask(__name__)
 CORS(app)
-
-PROGRESS_FILE = "progress.json"
 
 @app.route("/download", methods=["POST"])
 def download_video():
     data = request.json
     video_url = data.get("url")
 
-    video_buffer = io.BytesIO()  # Memory buffer for video
-
-    def progress_function(stream, chunk, bytes_remaining):
-        total_size = stream.filesize
-        bytes_downloaded = total_size - bytes_remaining
-        percent = (bytes_downloaded / total_size) * 100
-        with open(PROGRESS_FILE, "w") as f:
-            f.write(str(percent))
-
     try:
-        with open(PROGRESS_FILE, "w") as f:
-            f.write("0.0")
+        filename = f"{uuid.uuid4()}.mp4"
+        filepath = f"/tmp/{filename}"  # Render uses /tmp for temp files
 
-        yt = YouTube(video_url, on_progress_callback=progress_function)
-        stream = yt.streams.get_highest_resolution()
-        video_title = yt.title
+        # yt-dlp download command
+        cmd = ["yt-dlp", "-f", "best", "-o", filepath, video_url]
 
-        # Download to memory buffer
-        stream.stream_to_buffer(video_buffer)
-        video_buffer.seek(0)
-        
-        with open(PROGRESS_FILE, "w") as f:
-            f.write("100.0")
+        subprocess.run(cmd, check=True)
 
         return send_file(
-            video_buffer,
+            filepath,
             as_attachment=True,
-            download_name=f"{video_title}.mp4",
+            download_name="video.mp4",
             mimetype="video/mp4"
         )
 
+    except subprocess.CalledProcessError as e:
+        return jsonify({"success": False, "error": "Video download failed."}), 500
     except Exception as e:
-        with open(PROGRESS_FILE, "w") as f:
-            f.write("0.0")
-        traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-@app.route("/progress")
-def get_progress():
-    try:
-        with open(PROGRESS_FILE, "r") as f:
-            percent = float(f.read())
-        return jsonify({"percent": percent})
-    except:
-        return jsonify({"percent": 0.0})
-
+@app.route("/")
+def home():
+    return "YouTube/Instagram Downloader API"
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(debug=True)

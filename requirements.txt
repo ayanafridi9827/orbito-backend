@@ -1,4 +1,4 @@
-flask
-flask-cors
-pytube
 gunicorn
+flask
+yt-dlp
+flask-cors
