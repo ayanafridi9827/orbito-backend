@@ -33,7 +33,7 @@ def download_video():
             '--quiet',
             '--no-warnings',
             '--dump-json',
-            '--source-address', '0.0.0.0', # Force IPv4
+            '--proxy', 'http://194.145.194.162:8080',  # Using a free proxy
             video_url
         ]
 
@@ -52,7 +52,7 @@ def download_video():
             '--quiet',
             '--no-warnings',
             '--format', 'best[ext=mp4]/best',
-            '--source-address', '0.0.0.0', # Force IPv4
+            '--proxy', 'http://194.145.194.162:8080',  # Using a free proxy
             '-o', '-',  # Output to stdout
             video_url
         ]
