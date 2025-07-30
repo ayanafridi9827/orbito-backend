@@ -1,42 +1,35 @@
-from flask import Flask, request, send_file, jsonify
-from flask_cors import CORS
-import uuid
-import os
-import subprocess
+from flask import Flask, request, jsonify
+from yt_dlp import YoutubeDL
 
 app = Flask(__name__)
-CORS(app)
 
-@app.route("/download", methods=["POST"])
+@app.route('/download', methods=['POST'])
 def download_video():
-    data = request.json
-    video_url = data.get("url")
+    data = request.get_json()
+    url = data.get('url')
+
+    if not url:
+        return jsonify({"error": "URL is required"}), 400
 
     try:
-        filename = f"{uuid.uuid4()}.mp4"
-        filepath = f"/tmp/{filename}"  # Render uses /tmp for temp files
+        ydl_opts = {
+            'quiet': True,               # No console output
+            'no_warnings': True,         # Suppress warnings
+            'outtmpl': 'downloads/%(title)s.%(ext)s',  # Output path
+            'format': 'best',
+        }
 
-        # yt-dlp download command
-        cmd = ["yt-dlp", "-f", "best", "-o", filepath, video_url]
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
 
-        subprocess.run(cmd, check=True)
+        return jsonify({
+            "message": "Video downloaded successfully",
+            "title": info.get("title"),
+            "filename": ydl.prepare_filename(info)
+        })
 
-        return send_file(
-            filepath,
-            as_attachment=True,
-            download_name="video.mp4",
-            mimetype="video/mp4"
-        )
-
-    except subprocess.CalledProcessError as e:
-        return jsonify({"success": False, "error": "Video download failed."}), 500
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-
-@app.route("/")
-def home():
-    return "YouTube/Instagram Downloader API"
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(debug=True)
