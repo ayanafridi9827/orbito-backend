@@ -1,6 +1,6 @@
 from flask import Flask, request, send_file, jsonify, after_this_request
 from flask_cors import CORS
-import yt_dlp
+from pytube import YouTube
 import uuid
 import re
 import io
@@ -10,7 +10,6 @@ app = Flask(__name__)
 CORS(app)
 
 PROGRESS_FILE = "progress.json"
-ANSI_ESCAPE = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 
 @app.route("/download", methods=["POST"])
 def download_video():
@@ -19,54 +18,27 @@ def download_video():
 
     video_buffer = io.BytesIO()  # Memory buffer for video
 
-    def progress_hook(d):
-        if d['status'] == 'downloading':
-            percent_str = d.get('_percent_str', '0%')
-            clean_percent_str = ANSI_ESCAPE.sub('', percent_str).strip().replace('%', '')
-            try:
-                percent = float(clean_percent_str)
-            except ValueError:
-                percent = 0.0
-            with open(PROGRESS_FILE, "w") as f:
-                f.write(str(percent))
-        elif d['status'] == 'finished':
-            with open(PROGRESS_FILE, "w") as f:
-                f.write("100.0")
+    def progress_function(stream, chunk, bytes_remaining):
+        total_size = stream.filesize
+        bytes_downloaded = total_size - bytes_remaining
+        percent = (bytes_downloaded / total_size) * 100
+        with open(PROGRESS_FILE, "w") as f:
+            f.write(str(percent))
 
     try:
         with open(PROGRESS_FILE, "w") as f:
             f.write("0.0")
 
-        # Temporary file name
-        temp_filename = f"{uuid.uuid4()}.mp4"
+        yt = YouTube(video_url, on_progress_callback=progress_function)
+        stream = yt.streams.get_highest_resolution()
+        video_title = yt.title
 
-        ydl_opts = {
-            'outtmpl': temp_filename,
-            'format': 'best[ext=mp4]/best',
-            'quiet': True,
-            'merge_output_format': 'mp4',
-            'progress_hooks': [progress_hook],
-            'source_address': '0.0.0.0'  # Force IPv4 to potentially avoid IP blocks
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([video_url])
-            info = ydl.extract_info(video_url, download=False)
-            video_title = info.get("title", "video")
-
-        # Read video into memory
-        with open(temp_filename, "rb") as f:
-            video_buffer.write(f.read())
+        # Download to memory buffer
+        stream.stream_to_buffer(video_buffer)
         video_buffer.seek(0)
-
-        @after_this_request
-        def remove_file(response):
-            import os
-            try:
-                os.remove(temp_filename)
-            except Exception as e:
-                print(f"File delete failed: {e}")
-            return response
+        
+        with open(PROGRESS_FILE, "w") as f:
+            f.write("100.0")
 
         return send_file(
             video_buffer,
@@ -75,11 +47,6 @@ def download_video():
             mimetype="video/mp4"
         )
 
-    except yt_dlp.utils.DownloadError:
-        with open(PROGRESS_FILE, "w") as f:
-            f.write("0.0")
-        error_message = "The requested video is unavailable. It may be private, deleted, or region-restricted."
-        return jsonify({"success": False, "error": error_message}), 500
     except Exception as e:
         with open(PROGRESS_FILE, "w") as f:
             f.write("0.0")
