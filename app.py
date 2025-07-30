@@ -24,9 +24,12 @@ def download_video():
     try:
         progress_store[download_id] = {"status": "starting", "percent": 0}
 
+        import sys
+
         # Command to get video info as JSON
         info_command = [
-            'yt-dlp',
+            sys.executable,  # Use the current python interpreter
+            '-m', 'yt_dlp',
             '--quiet',
             '--no-warnings',
             '--dump-json',
@@ -44,7 +47,8 @@ def download_video():
 
         # Command to download the video to stdout
         download_command = [
-            'yt-dlp',
+            sys.executable, # Use the current python interpreter
+            '-m', 'yt_dlp',
             '--quiet',
             '--no-warnings',
             '--format', 'best[ext=mp4]/best',
