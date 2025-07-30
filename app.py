@@ -45,7 +45,8 @@ def download_video():
             'format': 'best[ext=mp4]/best',
             'quiet': True,
             'merge_output_format': 'mp4',
-            'progress_hooks': [progress_hook]
+            'progress_hooks': [progress_hook],
+            'source_address': '0.0.0.0'  # Force IPv4 to potentially avoid IP blocks
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -74,6 +75,11 @@ def download_video():
             mimetype="video/mp4"
         )
 
+    except yt_dlp.utils.DownloadError:
+        with open(PROGRESS_FILE, "w") as f:
+            f.write("0.0")
+        error_message = "The requested video is unavailable. It may be private, deleted, or region-restricted."
+        return jsonify({"success": False, "error": error_message}), 500
     except Exception as e:
         with open(PROGRESS_FILE, "w") as f:
             f.write("0.0")
