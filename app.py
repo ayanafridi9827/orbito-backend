@@ -1,59 +1,69 @@
-from flask import Flask, request, send_file, jsonify
+import os
+import subprocess
+import json
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-import yt_dlp
 import io
 import traceback
 
 app = Flask(__name__)
 CORS(app)
 
-# Use a dictionary to store progress for multiple downloads if necessary
+# A simple in-memory store for progress tracking
 progress_store = {}
 
 @app.route("/download", methods=["POST"])
 def download_video():
     data = request.json
     video_url = data.get("url")
-    # A unique ID for the download request
-    download_id = "download" 
+    download_id = "download"  # Using a fixed ID for simplicity
 
-    video_buffer = io.BytesIO()
-
-    def progress_hook(d):
-        if d['status'] == 'downloading':
-            # Extract percentage and update the progress store
-            percent_str = d.get('_percent_str', '0%')
-            # Clean up the string
-            percent_str = ''.join(filter(str.isdigit, percent_str))
-            try:
-                percent = float(percent_str)
-                progress_store[download_id] = percent
-            except ValueError:
-                pass # Ignore if conversion fails
-        elif d['status'] == 'finished':
-            progress_store[download_id] = 100.0
+    if not video_url:
+        return jsonify({"success": False, "error": "URL is required"}), 400
 
     try:
-        progress_store[download_id] = 0.0
+        progress_store[download_id] = {"status": "starting", "percent": 0}
 
-        ydl_opts = {
-            # Force IPv4 to avoid YouTube IP blocks on servers
-            'source_address': '0.0.0.0',
-            'format': 'best[ext=mp4]/best',
-            'outtmpl': '-', # Output to stdout
-            'logtostderr': True,
-            'quiet': True,
-            'progress_hooks': [progress_hook],
-        }
+        # Command to get video info as JSON
+        info_command = [
+            'yt-dlp',
+            '--quiet',
+            '--no-warnings',
+            '--dump-json',
+            '--source-address', '0.0.0.0', # Force IPv4
+            video_url
+        ]
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            video_title = info.get("title", "video")
-            
-            # Download to stdout and write to our buffer
-            download_stream = ydl.extract_info(video_url, download=True)
-            video_buffer.write(download_stream)
-            video_buffer.seek(0)
+        # Get video metadata
+        info_process = subprocess.run(info_command, capture_output=True, text=True)
+        if info_process.returncode != 0:
+            raise subprocess.CalledProcessError(info_process.returncode, info_command, stderr=info_process.stderr)
+        
+        video_info = json.loads(info_process.stdout)
+        video_title = video_info.get("title", "video")
+
+        # Command to download the video to stdout
+        download_command = [
+            'yt-dlp',
+            '--quiet',
+            '--no-warnings',
+            '--format', 'best[ext=mp4]/best',
+            '--source-address', '0.0.0.0', # Force IPv4
+            '-o', '-',  # Output to stdout
+            video_url
+        ]
+
+        progress_store[download_id] = {"status": "downloading", "percent": 50} # Placeholder progress
+
+        # Download the video
+        download_process = subprocess.run(download_command, capture_output=True)
+        if download_process.returncode != 0:
+            raise subprocess.CalledProcessError(download_process.returncode, download_command, stderr=download_process.stderr)
+
+        video_buffer = io.BytesIO(download_process.stdout)
+        video_buffer.seek(0)
+
+        progress_store[download_id] = {"status": "finished", "percent": 100}
 
         return send_file(
             video_buffer,
@@ -62,20 +72,22 @@ def download_video():
             mimetype="video/mp4"
         )
 
-    except yt_dlp.utils.DownloadError as e:
+    except subprocess.CalledProcessError as e:
         progress_store.pop(download_id, None)
         error_message = "The requested video is unavailable. It may be private, deleted, or region-restricted."
+        # Log the actual error from yt-dlp for debugging
+        print(f"yt-dlp error: {e.stderr}")
         return jsonify({"success": False, "error": error_message}), 500
     except Exception as e:
         progress_store.pop(download_id, None)
         traceback.print_exc()
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "An internal server error occurred."}), 500
 
 @app.route("/progress")
 def get_progress():
     download_id = "download"
-    percent = progress_store.get(download_id, 0.0)
-    return jsonify({"percent": percent})
+    progress = progress_store.get(download_id, {"status": "idle", "percent": 0})
+    return jsonify(progress)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
