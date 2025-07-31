@@ -5,12 +5,14 @@ import uuid
 import re
 import io
 import traceback
+import os
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 PROGRESS_FILE = "progress.json"
 ANSI_ESCAPE = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
+
 
 @app.route("/download", methods=["POST"])
 def download_video():
@@ -43,17 +45,27 @@ def download_video():
             'format': 'best[ext=mp4]/best',
             'quiet': True,
             'merge_output_format': 'mp4',
-            'progress_hooks': [progress_hook]
+            'progress_hooks': [progress_hook],
+            'noplaylist': True,
+            'ignoreerrors': False,
+            'geo_bypass': True,
+            'nocheckcertificate': True,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([video_url])
-            info = ydl.extract_info(video_url, download=False)
-            video_title = info.get("title", "video")
+            try:
+                ydl.download([video_url])
+                info = ydl.extract_info(video_url, download=False)
+                video_title = info.get("title", "video")
+            except yt_dlp.utils.DownloadError as de:
+                return jsonify({
+                    "success": False,
+                    "error": "This video is unavailable or restricted.",
+                    "details": str(de)
+                }), 400
 
         @after_this_request
         def remove_file(response):
-            import os
             try:
                 os.remove(temp_filename)
             except Exception as e:
@@ -71,7 +83,11 @@ def download_video():
         with open(PROGRESS_FILE, "w") as f:
             f.write("0.0")
         traceback.print_exc()
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({
+            "success": False,
+            "error": "Unexpected error occurred.",
+            "details": str(e)
+        }), 500
 
 
 @app.route("/progress")
